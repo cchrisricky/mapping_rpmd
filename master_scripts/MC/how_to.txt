@@ -1,0 +1,6 @@
+1. fix params.json
+2. inits folder with MCfirst.py and runfirst.pbs
+3. qsub runfirst.pbs
+4. run dist_inits.py (on the head node)
+5. Set time in runjob.pbs
+6. bash subjobs.sh

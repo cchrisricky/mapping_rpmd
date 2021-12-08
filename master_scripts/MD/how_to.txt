@@ -1,0 +1,4 @@
+1. fix params.json
+4. qsub runinits.pbs
+5. Set time in runjob.pbs
+6. bash subjobs.sh

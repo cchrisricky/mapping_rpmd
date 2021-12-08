@@ -1,0 +1,21 @@
+{
+    "mcType" : "Monte Carlo method: mod-mv, mv, or n",
+    "mdType" : "Dynamics method: mod-mv, mv, or n",
+    "Nmodel" : "Model number: integer",
+    "Nnuc" : "Number of nuclei: integer",
+    "Nbds" : "Number of beads: integer",
+    "Nlvl" : "Number of energy levels/states: integer",
+    "mass" : "Mass of each bead: int or float",
+    "beta" : "Inverse temperature: int or float",
+    "c" : "Potential offset: int or float",
+    "a" : "Potential nuclear coupling: int or float",
+    "delta" : "Potential electronic coupling: int or float",
+    "Nsteps" : "Number of MC steps: int or float (casted to int so 1E6 will work)",
+    "Ntrajs" : "Number of MD trajectories to run per job: integer",
+    "Nslices" : "Number of MC jobs to run (remember to update subjobs.sh): integer",
+    "Nruns" : "Number of MD jobs to run (remember to update subjobs.sh): integer",
+    "time" : "Time for MD runs in A.U.: float",
+    "delt" : "Time step for MD runs: float",
+    "Nprint" : "Print (MC and MD) every this many steps: integer",
+    "intype" : "MD integrator type: vv or rk4"
+}
