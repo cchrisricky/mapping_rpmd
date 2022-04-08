@@ -11,7 +11,7 @@ def set_potential( potype, potparams, nstates, nnuc, nbds ):
 
     #Separate routine which returns the appropriate potential class indicated by potype
 
-    potype_list = ['harm_const_cpl', 'harm_lin_cpl', 'harm_lin_cpl_symmetrized' 'nstate_morse', 'nuc_only_harm', 'pengfei_polariton', 'isolated_elec']
+    potype_list = ['harm_const_cpl', 'harm_lin_cpl', 'harm_lin_cpl_symmetrized', 'nstate_morse', 'nuc_only_harm', 'pengfei_polariton', 'isolated_elec']
 
     if( potype not in potype_list ):
         print("ERROR: potype not one of valid types:")
@@ -485,7 +485,7 @@ class harm_lin_cpl_symmetrized(potential):
         self.Hel += self.cmat
         
         #minus the average of diagonal terms
-        for i in range(self.nbeads):
+        for i in range(self.nbds):
             self.Hel[i,:,:] -= np.mean(np.diag(self.Hel[i,:,:])) * np.eye(self.nstates)
         
     ###############################################################
@@ -501,9 +501,10 @@ class harm_lin_cpl_symmetrized(potential):
         d_Hel = np.copy(self.amat)
 
         for i in range(self.nnuc):
-            dHel[i,:,:] -= np.mean(np.diag(self.amat[i,:,:])) * np.eye(self.nstates)
+            d_Hel[i,:,:] -= np.mean(np.diag(self.amat[i,:,:])) * np.eye(self.nstates)
+
         #multi-bead d_Hel
-        self.d_Hel = dHel[np.newaxis,:,:,:]
+        self.d_Hel = d_Hel[np.newaxis,:,:,:]
 
     ###############################################################
 
@@ -511,10 +512,11 @@ class harm_lin_cpl_symmetrized(potential):
         #Subroutine to calculate the energy associated with the state independent term
 
         #harmonic term with different k for each nuclei
-        eng = 0.5 * np.sum( self.kvec * nucR**2 )
+        eng = 0.5 * np.sum(self.kvec * nucR ** 2)
 
         #V/bar (R): the average or diagonal terms
-        eng += np.sum( np.einsum( 'ijj, ai', self.amat, nucR) ) / self.nstates
+        
+        eng += np.mean( np.diag (np.einsum( 'ijk,ai->jk', self.amat, nucR ) + self.cmat*self.nbds) )
 
         return eng
 

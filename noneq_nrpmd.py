@@ -6,6 +6,8 @@ import utils
 import map_rpmd
 import nrpmd
 import sys
+import time
+from scipy.linalg import expm
 
 class noneq_nrpmd( map_rpmd.map_rpmd ):
     
@@ -17,6 +19,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
 
         #initilaize Theta
         self.theta = None
+        self.W     = None
 
     #####################################################################
 
@@ -39,15 +42,35 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         return dnucR, dnucP, dmapR, dmapP
 
     #####################################################################
+
     def get_theta( self ):
         #Subroutine to calculate Theta (minus the Gaussian term and prefactor) following Huo's 2019 paper https://dx.doi.org/10.1063/1.5096276
 
         #Electronic trace over the product of C matrices
         halfeye = 0.5 * np.eye(self.nstates)
         prod = np.outer(( self.mapR[0] + 1j*self.mapP[0] ), ( self.mapR[0] - 1j*self.mapP[0] )) - halfeye
-        for i in range(1, self.nbds):
-            prod = prod @ ( np.outer(( self.mapR[i] + 1j*self.mapP[i] ), ( self.mapR[i] - 1j*self.mapP[i] )) - halfeye )
+        if self.nbds > 1:
+            for i in range(1, self.nbds):
+                prod = prod @ ( np.outer(( self.mapR[i] + 1j*self.mapP[i] ), ( self.mapR[i] - 1j*self.mapP[i] )) - halfeye )
+
         self.theta = np.real( np.trace( prod ) )
+
+    #####################################################################
+
+    def get_W( self ):
+        #Subroutine to calculate W following Richardson's 2013 paper https://dx.doi.org/10.1063/1.4816124
+
+        #Update electronic Hamiltonian matrix
+        self.potential.calc_Hel( self.nucR )
+
+        #M matrices
+        Ms = np.zeros( [self.nbds, self.nstates, self.nstates] )
+        for i in range( self.nbds ): Ms[i] = expm(-self.beta_p / 2 * self.potential.Hel[i])
+
+        #Loop over each bead to calculate and multiply W
+        self.W = 1.0
+        for i in range( self.nbds ):
+            self.W *= ( self.mapP[i - 1] @ Ms[i] @ self.mapR[i]) * ( self.mapR[i] @ Ms[i] @ self.mapP[i] )
 
     #####################################################################
 
@@ -63,12 +86,12 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
 
         #Force associated with harmonic springs between beads and the state-independent portion of the potential
         #This is dealt with in the parent class
-        #If intRP_bool is False does not calculate the contribution from the harmonic ring polymer springs
+        #If intRP_bool is False it does not calculate the contribution from the harmonic ring polymer springs
 
         if (self.nbds > 1):
             d_nucP = super().get_timederiv_nucP( intRP_bool )
         else:
-            d_nucP = np.zeros_like( self.nucP )
+            d_nucP = super().get_timederiv_nucP( intRP_bool = False )
 
         #Calculate nuclear derivative of electronic Hamiltonian matrix
         self.potential.calc_Hel_deriv( self.nucR )
@@ -108,7 +131,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         #Subroutine to calculate the second time-derivative of just the mapping positions for each bead
         #This assumes that the nuclei are fixed - used in vv style integrators
 
-        d2_mapR =  np.einsum( 'inm,im->in', self.potential.Hel, d_mapP )
+        d2_mapR = np.einsum( 'inm,im->in', self.potential.Hel, d_mapP )
 
         return d2_mapR
 
@@ -155,6 +178,29 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
 
     #####################################################################
 
+    def get_sampling_eng( self ):
+        pass
+
+    #####################################################################
+
+    def init_lvc_nucdist_infitemp( self, mass, kvec, amat, nlevel ):
+        #get the nuc distribution of coordinates and momenta using Eq(20) in Geva's 2020 paper
+        #The one-nuc rho is expressed as tanh(\beta \hbar \omega_i)/\pi \hbar * exp(-tanh(\beta \hbar \omega_i)/\hbar \omega_i) * (c + P^2/2 + 1/2 * omega^2 * R^2 + a_i * R_i))
+        #when temperature is 0, tanh(infty) = 1
+        
+        print()
+        print( '#########################################################' )
+        print( 'Initializing nuclei equilibrium configuration in state', nlevel, 'using exact quantum distribution' )
+        print( '#########################################################' )
+
+        self.nucP = np.zeros([self.nbds, self.nnuc])
+        self.nucR = np.zeros([self.nbds, self.nnuc])
+        for i in range(self.nnuc):
+            self.nucP[:, i] = self.rng.normal( loc = 0.0, scale = np.sqrt( 0.5 * np.sqrt(kvec[i]/mass[i]) ), size = self.nbds )
+            self.nucR[:, i] = self.rng.normal( loc = - amat[i, nlevel, nlevel] / ( kvec[i]/mass[i]), scale = np.sqrt( 1 / ( 2*np.sqrt(kvec[i]/mass[i]))), size = self.nbds )
+
+    #####################################################################
+
     def print_data( self, current_time ):
         #Subroutine to calculate and print-out observables of interest
 
@@ -190,7 +236,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         nucR_com = self.calc_nucR_com()
 
         #Updates the value of the W function
-        self.get_W()
+        #self.get_W()
 
         #Updates the value of the Theta function
         self.get_theta()
@@ -201,7 +247,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         output[1] = etot
         output[2] = engke
         output[3] = engpe
-        output[4] = self.W
+        output[4] = 0
         output[5] = self.theta
         output[6:6+self.nstates] = wig_pop
         output[6+self.nstates:6+2*self.nstates] = semi_pop
@@ -290,7 +336,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
                 orig_mapP = np.copy(self.mapP)
                 engold    = engnew
             else:
-                else: acc_cond = np.exp( -self.beta_p * ( d_eng ) )
+                acc_cond = np.exp( -self.beta_p * ( d_eng ) )
                 if( self.rng.random() < acc_cond ):
                     #accept new configuration
                     numacc += 1

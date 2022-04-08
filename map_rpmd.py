@@ -25,6 +25,7 @@ class map_rpmd(ABC):
         print() #Print blank line for readability
 
         self.methodname = methodname #string defining the sub-class method name
+        self.potype     = potype     #the type of potential
 
         self.nstates = nstates   #number of electronic states
         self.nnuc    = nnuc      #number of nuclear modes
@@ -394,18 +395,30 @@ class map_rpmd(ABC):
 
     #####################################################################
 
-    def get_nucP_MB( self ):
+    def get_nucP_MB( self, beta = None ):
 
         #Obtain nuclear momentum from Maxwell-Boltzmann distribution at beta_p
         #distribution defined as e^(-1/2*x^2/sigma^2) so sigma=sqrt(mass/beta)
-
         self.nucP = np.zeros([self.nbds,self.nnuc])
-        for i in range( self.nnuc ):
+        
+        if (beta is None):
+            for i in range( self.nnuc ):
 
-            mass = self.mass[i]
-            sigma = np.sqrt( mass / self.beta_p )
+                mass = self.mass[i]
+                sigma = np.sqrt( mass / self.beta_p )
 
-            self.nucP[:,i] = self.rng.normal( 0.0, sigma, self.nbds )
+                self.nucP[:,i] = self.rng.normal( 0.0, sigma, self.nbds )
+        
+        else:
+            beta_p = beta / self.nbds
+
+            for i in range( self.nnuc ):
+
+                mass = self.mass[i]
+                sigma = np.sqrt( mass / beta_p )
+
+                self.nucP[:,i] = self.rng.normal( 0.0, sigma, self.nbds )
+
 
     #####################################################################
 
@@ -456,7 +469,7 @@ class map_rpmd(ABC):
         
         for i in range(self.nstates):
             
-            Q[:,i] = 0.5 * ( self.nstates * ( self.mapR[:, i]**2 + self.mapP[:, i]**2 ) - np.sum( self.mapR**2 + self.mapP**2, axis = 1 ) ) 
+            Q[:,i] = 0.5 * ( self.nstates * ( self.mapR[:, i]**2 + self.mapP[:, i]**2 ) - np.sum( self.mapR**2 + self.mapP**2, axis = 1 ) )
 
         return Q #output an array sized [nbds, nstates]
 
@@ -467,16 +480,16 @@ class map_rpmd(ABC):
         #calculate the Gaussian-like prefactor resulting from the Wigner transform on the projected SEO operaters
         #See saller, Kelly and Richardson Faraday Discussion 2020
 
-        phi = 2 ** (self.nstates + 2) * np.exp( np.sum(-self.mapR**2 + self.mapP**2, axis = 1 )) 
+        phi = 2 ** (self.nstates + 2) * np.exp( np.sum( - self.mapR**2 - self.mapP**2, axis = 1 )) 
 
         return phi #an array sized [nbds]
 
     #####################################################################
-
+ 
     def init_map_wigner_sampling(self):
 
         #Initialize mapping variables by pulled from phi distribution
-        #phi = 2^(L+2) exp[\sum_i (x_i^2 + p_i^2)]
+        #phi = 2^(L+2) exp[-\sum_i (x_i^2 + p_i^2)]
         #No state specificity
         #See Geva JCTC 2020
 
@@ -486,8 +499,10 @@ class map_rpmd(ABC):
         print( '#########################################################' )
         print()
 
-        self.mapR = self.rng.normal( 0.0, 0.5, [ self.nbds, self.nstates ] )
-        self.mapP = self.rng.normal( 0.0, 0.5, [ self.nbds, self.nstates ] )
+        self.mapR = self.rng.normal( 0.0, np.sqrt(0.5), [ self.nbds, self.nstates ] )
+        self.mapP = self.rng.normal( 0.0, np.sqrt(0.5), [ self.nbds, self.nstates ] )
+
+    
 
     #####################################################################
 
