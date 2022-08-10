@@ -11,7 +11,7 @@ def set_potential( potype, potparams, nstates, nnuc, nbds ):
 
     #Separate routine which returns the appropriate potential class indicated by potype
 
-    potype_list = ['harm_const_cpl', 'harm_lin_cpl', 'harm_lin_cpl_symmetrized', 'nstate_morse', 'nuc_only_harm', 'pengfei_polariton', 'isolated_elec']
+    potype_list = ['harm_const_cpl', 'harm_lin_cpl', 'harm_lin_cpl_symmetrized', 'harm_lin_cpl_sym_2', 'nstate_morse', 'nuc_only_harm', 'pengfei_polariton', 'isolated_elec']
 
     if( potype not in potype_list ):
         print("ERROR: potype not one of valid types:")
@@ -486,7 +486,7 @@ class harm_lin_cpl_symmetrized(potential):
         
         #minus the average of diagonal terms
         for i in range(self.nbds):
-            self.Hel[i,:,:] -= np.mean(np.diag(self.Hel[i,:,:])) * np.eye(self.nstates)
+            self.Hel[i] -= np.mean(np.diag(self.Hel[i])) * np.eye(self.nstates)
         
     ###############################################################
 
@@ -501,7 +501,7 @@ class harm_lin_cpl_symmetrized(potential):
         d_Hel = np.copy(self.amat)
 
         for i in range(self.nnuc):
-            d_Hel[i,:,:] -= np.mean(np.diag(self.amat[i,:,:])) * np.eye(self.nstates)
+            d_Hel[i] -= np.mean(np.diag(self.amat[i])) * np.eye(self.nstates)
 
         #multi-bead d_Hel
         self.d_Hel = d_Hel[np.newaxis,:,:,:]
@@ -532,6 +532,106 @@ class harm_lin_cpl_symmetrized(potential):
         #minus the average-of-diagonal terms
         avg_amat = np.einsum( 'ijj, ai -> ai', self.amat, np.ones_like(nucR) ) / self.nstates
         force -= avg_amat
+
+        return force
+
+    ###############################################################
+
+    def error_check( self ):
+
+        if( self.kvec.shape != (self.nnuc,) ):
+            print("ERROR: 1st entry of list potparams should correspond to nnuc k-vector for linear coupling harmonic potential")
+            exit()
+
+        if( self.amat.shape != (self.nnuc,self.nstates,self.nstates) ):
+            print("ERROR: 2nd entry of list potparams should correspond to nnuc x nstate x nstate harmonic-shift and linear-coupling tensor for linear coupling harmonic potential")
+            exit()
+
+        if( self.cmat.shape != (self.nstates,self.nstates) ):
+            print("ERROR: 3rd entry of list potparams should correspond to nstate x nstate state constant energy/coupling matrix for linear coupling harmonic potential")
+            exit()
+
+#########################################################################
+
+class harm_lin_cpl_sym_2(potential):
+
+    #Class for shifted harmonics where electronic coupling depends linearly on nuclear modes
+    #Force constant is same between states, but can differ for different nuclei
+    #setting linear couplings to zero reproduces constant coupling potential above
+    #See Tamura, Ramon, Bittner, and Burghardt, PRL 2008
+
+    ###############################################################
+
+    def __init__( self, potparams, nstates, nnuc, nbds ):
+
+        super().__init__( 'shifted harmonics - linear coupling - sym', potparams, nstates, nnuc, nbds )
+
+        #Set appropriate potential parameters
+        if( len(potparams) != 3 ):
+            super().error_wrong_param_numb(3)
+
+        self.kvec = potparams[0] #force constants, size nnuc, NOTE THAT THIS IS FORCE CONSTANT NOT FREQUENCY!!
+        amat = potparams[1] #shift in harmonic potential along diagonal, and linear couplings along off-diagonal, size nnuc x nstates x nstates (corresponds to kappa and lambda terms in PRL paper)
+        #shift in harmonic potentials, size nnuc x nstates (corresponds to kappa terms in PRL paper)
+        cmat = potparams[2] #energy shift and constant coupling for different states, size nstates x nstates (corresponds to C-matrix in PRL paper)
+
+        self.abar = np.zeros(nnuc)
+        self.amat = np.zeros_like(amat)
+        for i in range(self.nnuc):
+            self.abar[i] = np.mean(np.diag(amat[i]))
+            self.amat[i] = amat[i] - self.abar[i] * np.eye(self.nstates)
+
+        self.cbar = np.mean(np.diag(cmat))
+        self.cmat = cmat - self.cbar * np.eye(self.nstates)
+        #Input error check
+        self.error_check()
+
+    ###############################################################
+
+    def calc_Hel( self, nucR ):
+        #Subroutine to calculate set of electronic Hamiltonian matrices for each bead
+        #nucR is the nuclear positions and is of dimension nbds x nnuc
+        self.Hel = np.zeros([self.nbds, self.nstates, self.nstates])
+        for bd in range(self.nbds):
+            for nuc in range(self.nnuc):
+                self.Hel[bd] += self.amat[nuc] * nucR[bd,nuc]
+            self.Hel[bd] += self.cmat
+        #minus the average of diagonal terms
+        
+    ###############################################################
+
+    def calc_Hel_deriv( self, nucR ):
+
+        #Subroutine to calculate set of nuclear derivative of electronic Hamiltonian matrices for each bead
+        #nucR is the nuclear positions and is of dimension nbds x nnuc
+        for bd in range(self.nbds):
+            self.d_Hel[bd] = self.amat
+
+    ###############################################################
+
+    def calc_state_indep_eng( self, nucR ):
+        #Subroutine to calculate the energy associated with the state independent term
+
+        eng = 0
+
+        for bd in range(self.nbds):
+            for nuc in range(self.nnuc):
+                eng += self.kvec[nuc] * nucR[bd,nuc] ** 2 / 2 + self.abar[nuc] * nucR[bd,nuc]
+            eng += self.cbar
+        
+        return eng
+
+    ###############################################################
+
+    def calc_state_indep_force( self, nucR ):
+        #Subroutine to calculate the force associated with the state independent term
+        #Note that this corresponds to the negative derivative
+
+        #force from harmonic term with different k for each nuclei
+        force = np.zeros([self.nbds, self.nnuc])
+        for bd in range(self.nbds):
+            for nuc in range(self.nnuc):
+                force[bd,nuc] -= self.kvec[nuc] * nucR[bd,nuc] + self.abar[nuc]
 
         return force
 
@@ -606,7 +706,11 @@ class pengfei_polariton(potential):
 
         #Need to add all the gc wc stuff to the hamiltonian
 
-        exit()
+        self.Hel[:,0,0] += 1.5 * self.wc
+        self.Hel[:,1,1] += 0.5 * self.wc
+
+        self.Hel[:,0,1] += self.gc
+        self.Hel[:,1,0] += self.gc
 
 
     ###############################################################
@@ -616,14 +720,31 @@ class pengfei_polariton(potential):
         #Subroutine to calculate set of nuclear derivative of electronic Hamiltonian matrices for each bead
         #nucR is the nuclear positions and is of dimension nbds x nnuc
 
-        self.d_Hel = 2.0
+        rxnR = np.copy( nucR[:,0] )
 
+        Vmat = np.zeros([self.nbds,self.nstates,self.nstates])
+        dVmat = np.zeros([self.nbds,self.nstates,self.nstates])
+        d_Hel = np.zeros([self.nbds,self.nstates,self.nstates])
+
+        Vmat[:,0,0] = self.Amat[0,0] + self.Bmat[0,0] * ( rxnR - self.Rmat[0,0] )**2
+        Vmat[:,0,1] = self.Amat[0,1] + self.Bmat[0,1] * ( rxnR - self.Rmat[0,1] )**2
+        Vmat[:,1,0] = self.Amat[1,0] + self.Bmat[1,0] * ( rxnR - self.Rmat[1,0] )**2
+        Vmat[:,1,1] = self.Amat[1,1] + self.Bmat[1,1] * ( rxnR - self.Rmat[1,1] )**2
+
+        dVmat[:,0,0] = 2 * self.Bmat[0,0] * ( rxnR - self.Rmat[0,0] )
+        dVmat[:,0,1] = 2 * self.Bmat[0,1] * ( rxnR - self.Rmat[0,1] )
+        dVmat[:,1,0] = 2 * self.Bmat[1,0] * ( rxnR - self.Rmat[1,0] )
+        dVmat[:,1,1] = 2 * self.Bmat[1,1] * ( rxnR - self.Rmat[1,1] )
+
+        d_Hel[:,0,0] = 0.5*( dVmat[:,0,0] + dVmat[:,0,1] ) - ( Vmat[:,0,0] - Vmat[:,0,1] ) * (dVmat[:,0,0] - dVmat[:,0,1]) / ( 4 * np.sqrt( self.Dvec[0]**2 + 0.25* ( Vmat[:,0,0] - Vmat[:,0,1] )**2 ) )
+        d_Hel[:,1,1] = 0.5*( dVmat[:,1,0] + dVmat[:,1,1] ) - ( Vmat[:,1,0] - Vmat[:,1,1] ) * (dVmat[:,1,0] - dVmat[:,1,1]) / ( 4 * np.sqrt( self.Dvec[1]**2 + 0.25* ( Vmat[:,1,0] - Vmat[:,1,1] )**2 ) )
+        self.d_Hel = d_Hel[:,np.newaxis,:,:]
     ################################################################
 
     def calc_state_indep_eng( self, nucR ):
         #Subroutine to calculate the energy associated with the state independent term
 
-        eng = 1.0
+        eng = 0
 
         return eng
 
@@ -634,7 +755,7 @@ class pengfei_polariton(potential):
         #Note that this corresponds to the negative derivative
 
         #force from harmonic term with different k for each nuclei
-        force = -1.0
+        force = 0
 
         return force
 

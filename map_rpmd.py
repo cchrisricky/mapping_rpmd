@@ -42,7 +42,8 @@ class map_rpmd(ABC):
         self.rng = np.random.default_rng()
 
         #Input error check
-        self.init_error_check()
+        if (self.methodname != 'sb-NRPMD'):
+            self.init_error_check()
 
         #Define potential
         self.potential = potential.set_potential( potype, potparams, nstates, nnuc, nbds )
@@ -94,6 +95,7 @@ class map_rpmd(ABC):
         self.file_phi    = open( 'phi.dat', 'w')
 
         current_time = init_time
+        step = 0
         for step in range( Nsteps ):
 
             #Print data starting with initial time
@@ -291,6 +293,114 @@ class map_rpmd(ABC):
 
     #####################################################################
 
+    def run_PIMD( self, Nsteps=None, resample=None, intype=None, Nprint=100, delt=None, init_time=0.0, small_dt_ratio=1 ):
+
+        #routine to run PIMC only for the nuclei with vv-type integrators
+        #resample - the number of steps that equilibrate the temperature (NVT MD)
+        #small_dt_ratio - the ratio of electronic time-step with nuclear one. include this only b/c we use the integral package
+
+        #Set resamp to Nsteps + 1 so the MC never resamples if None is specified
+        if( resample is None ): resample = Nsteps + 1
+
+        #error check for the intype
+        if(intype != 'vv' and intype != 'analyt' and intype != 'cayley'):
+            print('ERROR: the intype should be one of these: vv, analyt or cayley. Now it is', intype)
+            exit()
+
+        #Initialize the integrator
+        self.integ = integrator.integrator( self, delt, intype, small_dt_ratio )
+
+        #converting to string, taking the length, and subtracting 2 (for the 0.) gives us the length of just the decimal component
+        tDigits = len( str( math.modf(Nprint * delt)[0] ) ) - 2
+
+        #Automatically initialize nuclear momentum from MB distribution if none have been specified
+        if( self.nucP is None ):
+            print('Automatically initializing nuclear momenta to Maxwell-Boltzmann distribution at beta_p =', self.beta_p*self.nbds ,'/',self.nbds)
+            self.get_nucP_MB()
+
+        #Initialize nuclear positions to zero if None specified
+        if( self.nucR is None ):
+            print('Automatically initializing all nuclear positions to zero')
+            self.nucR = np.zeros([self.nbds, self.nnuc])
+
+        #Open output files
+        self.file_output = open( 'output.dat', 'w' )
+        self.file_nucR   = open( 'nucR.dat','w' )
+        self.file_nucP   = open( 'nucP.dat','w' )
+
+        print()
+        print( '#########################################################' )
+        print('running equilibrium PIMC for', Nsteps, 'at beta_p =', self.beta_p*self.nbds, '/',self.nbds)
+        print( '#########################################################' )
+        print()
+
+        current_time = init_time
+        step = 0
+
+        for step in range( Nsteps ):
+
+            #resample the nucP if we need to
+            if( np.mod( step+1, resample ) == 0 ):
+                print('resample the bead momentum to run within an NVT ensemble')
+                self.get_nucP_MB()
+
+            #Print data starting with initial time
+            if( np.mod( step, Nprint ) == 0 ):
+                print('Writing data at step', step, 'and time', format(current_time, '.'+str(tDigits)+'f'), 'for PIMD calculation')
+                self.print_PIMD_data( current_time )
+                sys.stdout.flush()
+
+            #Outer loop to integrate EOM using velocity-verlet like algorithms
+            #This includes pengfei's implementation, and the analtyical and cayley modification of it
+
+            #If initial step of dynamics need to initialize derivative of nuclear momentum (aka the force on the nuclei)
+            #NOTE: moving forward these calls may need to be generalized to allow for other types of methods
+            if( step == 0 ):
+                if( intype == 'vv' ):
+                    self.integ.d_nucP_for_vv = self.potential.calc_external_force( self.nucR ) + self.potential.calc_rp_harm_force( self.nucR, self.beta_p, self.mass )
+                else:
+                    self.integ.d_nucP_for_vv = self.potential.calc_external_force( self.nucR )
+
+            #Update nuclear momentum by 1/2 a time-step
+            self.integ.update_vv_nucP( self )
+
+            #Update nuclear position for full time-step
+            if( intype == 'vv' ):
+                self.integ.update_vv_nucR( self )
+            elif( intype == 'analyt' ):
+                self.integ.update_analyt_nucR( self )
+            elif( intype == 'cayley' ):
+                self.integ.update_cayley_nucR( self )
+
+            #Calculate derivative of nuclear momentum at new time-step (aka the force on the nuclei)
+            #Don't include contribution from internal modes of ring-polymer if doing analyt or cayley
+            if( intype == 'vv' ):
+                self.integ.d_nucP_for_vv = self.potential.calc_external_force( self.nucR ) + self.potential.calc_rp_harm_force( self.nucR, self.beta_p, self.mass )
+            else:
+                self.integ.d_nucP_for_vv = self.potential.calc_external_force( self.nucR )
+
+            #Update nuclear momentum to full time-step
+            self.integ.update_vv_nucP( self )
+
+            #Increase current time
+            current_time = init_time + delt * (step+1)
+
+        #Print data at final step regardless of Nprint
+        print('Writing data at step ', step+1, 'and time', format(current_time, '.'+str(tDigits)+'f'), 'for PIMD Dynamics calculation')
+        self.print_PIMD_data( current_time )
+        sys.stdout.flush()
+
+        #Close output files
+        self.file_output.close()
+        self.file_nucR.close()
+        self.file_nucP.close()
+
+        print()
+        print( '#########################################################' )
+        print( 'END', self.methodname, 'PIMD' )
+        print( '#########################################################' )
+        print()
+    
     def run_nuc_only_MC( self, Nsteps=1000, Nprint=100, disp=0.1, nmove=1 ):
 
         #Routine to run Monte-Carlo routine for only the nuclei
@@ -475,6 +585,17 @@ class map_rpmd(ABC):
 
     #####################################################################
 
+    def calc_Q_array_sb( self ):
+        
+        #Calculate the traceless operator Q in each bead and electronic state if there is only one bead or LSC-IVR
+        #See Saller, Kelly and Richardson Faraday Discussions 2020
+            
+        Q = 0.5 * ( self.nstates * ( self.mapR**2 + self.mapP**2 ) - np.sum( self.mapR**2 + self.mapP**2 ) )
+
+        return Q #output an array sized [nstates]
+
+    #####################################################################
+
     def calc_phi_fcn( self ):
 
         #calculate the Gaussian-like prefactor resulting from the Wigner transform on the projected SEO operaters
@@ -483,6 +604,18 @@ class map_rpmd(ABC):
         phi = 2 ** (self.nstates + 2) * np.exp( np.sum( - self.mapR**2 - self.mapP**2, axis = 1 )) 
 
         return phi #an array sized [nbds]
+
+    #####################################################################
+
+    def calc_phi_fcn_sb( self ):
+
+        #calculate the Gaussian-like prefactor resulting from the Wigner transform on the projected SEO operaters
+        #only for single bead case or LSC-IVR
+        #See saller, Kelly and Richardson Faraday Discussion 2020
+
+        phi = 2 ** (self.nstates + 2) * np.exp( np.sum( - self.mapR**2 - self.mapP**2 )) 
+
+        return phi #output a number
 
     #####################################################################
  
@@ -501,8 +634,6 @@ class map_rpmd(ABC):
 
         self.mapR = self.rng.normal( 0.0, np.sqrt(0.5), [ self.nbds, self.nstates ] )
         self.mapP = self.rng.normal( 0.0, np.sqrt(0.5), [ self.nbds, self.nstates ] )
-
-    
 
     #####################################################################
 
@@ -584,6 +715,43 @@ class map_rpmd(ABC):
 
     #####################################################################
 
+    def print_PIMD_data( self, current_time ):
+        #Subroutine to calculate and print-out observables of interest
+
+        fmt_str = '%20.8e'
+
+        ###### CALCULATE OBSERVABLES OF INTEREST #######
+
+        #Calculate potential energy
+        engpe = self.potential.calc_tot_PE( self.nucR, self.beta_p, self.mass )
+
+        #Calculate Nuclear Kinetic Energy
+        engke = self.potential.calc_nuc_KE( self.nucP, self.mass )
+
+        #Calculate total energy
+        etot = engpe + engke
+
+        #Calculate the center of mass of each ring polymer
+        nucR_com = self.calc_nucR_com()
+
+        ######## PRINT OUT EVERYTHING #######
+        output     = np.zeros(4+self.nnuc)
+        output[0]  = current_time
+        output[1]  = etot
+        output[2]  = engke
+        output[3]  = engpe
+        output[4:] = nucR_com
+
+        np.savetxt( self.file_output, output.reshape(1, output.shape[0]), fmt_str )
+        self.file_output.flush()
+
+        #Print out positions and momenta of nuclei
+        #columns go as bead_1_nuclei_1 bead_1_nuclei_2 ... bead_1_nuclei_K bead_2_nuclei_1 bead_2_nuclei_2 ...
+        np.savetxt( self.file_nucR, np.insert( self.nucR.flatten(), 0, current_time ).reshape(1, self.nucR.size+1), fmt_str )
+        np.savetxt( self.file_nucP, np.insert( self.nucP.flatten(), 0, current_time ).reshape(1, self.nucP.size+1), fmt_str )
+
+    #####################################################################
+
     def print_nuconly_data( self, step, numacc ):
         #Subroutine to calculate and print-out observables of interest
 
@@ -613,6 +781,8 @@ class map_rpmd(ABC):
         #Print out position of nuclei
         #columns go as bead_1_nuclei_1 bead_1_nuclei_2 ... bead_1_nuclei_K bead_2_nuclei_1 bead_2_nuclei_2 ...
         np.savetxt( self.file_nucR, np.insert( self.nucR.flatten(), 0, step ).reshape(1, self.nucR.size+1), fmt_str )
+        self.file_nucR.flush()
+        self.file_nucP.flush()
 
     #####################################################################
 

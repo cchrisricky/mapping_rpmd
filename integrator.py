@@ -135,12 +135,48 @@ class integrator():
         elif( self.intype == 'cayley' ):
             self.update_cayley_nucR( map_rpmd )
 
-        #Update electronic Hamiltonian given new position
-        #NOTE: Moving forward this call may need to be generalized to allow for other types of methods
-        map_rpmd.potential.calc_Hel( map_rpmd.nucR )
-
+        #Update electronic Hamiltonian given new positioninteg
         #Update mapping variables to full time-step
         self.update_vv_mapRP( map_rpmd )
+
+        #Calculate derivative of nuclear momentum at new time-step (aka the force on the nuclei)
+        #Don't include contribution from internal modes of ring-polymer if doing analyt or cayley
+        if( self.intype == 'vv' ):
+            self.d_nucP_for_vv = map_rpmd.get_timederiv_nucP(intRP_bool=True)
+        else:
+            self.d_nucP_for_vv = map_rpmd.get_timederiv_nucP(intRP_bool=False)
+
+        #Update nuclear momentum to full time-step
+        self.update_vv_nucP( map_rpmd )
+
+    def vv_outer_nuconly( self, map_rpmd, step):
+
+        #Outer loop to integrate EOM using velocity-verlet like algorithms
+        #This includes pengfei's implementation, and the analtyical and cayley modification of it
+
+        #If initial step of dynamics need to initialize electronic hamiltonian
+        #and derivative of nuclear momentum (aka the force on the nuclei)
+        #NOTE: moving forward these calls may need to be generalized to allow for other types of methods
+        if( step == 0 ):
+            map_rpmd.potential.calc_Hel( map_rpmd.nucR )
+            if( self.intype == 'vv' ):
+                self.d_nucP_for_vv = map_rpmd.get_timederiv_nucP(intRP_bool=True)
+            else:
+                self.d_nucP_for_vv = map_rpmd.get_timederiv_nucP(intRP_bool=False)
+
+        #Update nuclear momentum by 1/2 a time-step
+        self.update_vv_nucP( map_rpmd )
+
+        #Update mapping variables by 1/2 a time-step
+        self.update_vv_mapRP( map_rpmd )
+
+        #Update nuclear position for full time-step
+        if( self.intype == 'vv' ):
+            self.update_vv_nucR( map_rpmd )
+        elif( self.intype == 'analyt' ):
+            self.update_analyt_nucR( map_rpmd )
+        elif( self.intype == 'cayley' ):
+            self.update_cayley_nucR( map_rpmd )
 
         #Calculate derivative of nuclear momentum at new time-step (aka the force on the nuclei)
         #Don't include contribution from internal modes of ring-polymer if doing analyt or cayley

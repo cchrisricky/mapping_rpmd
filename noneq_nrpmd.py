@@ -102,7 +102,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         d_nucP += -0.5 * np.einsum( 'in,ijnm,im -> ij', self.mapP, self.potential.d_Hel, self.mapP )
 
         #add the state-average potential
-        if (self.potype != 'harm_lin_cpl_symmetrized'):
+        if (self.potype != 'harm_lin_cpl_symmetrized' or self.potype != 'harm_lin_cpl_sym_2'):
             d_nucP +=  0.5 * np.einsum( 'ijnn -> ij', self.potential.d_Hel )
 
         return d_nucP
@@ -156,7 +156,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         engpe += 0.5 * np.sum( np.einsum( 'in,inm,im -> i', self.mapR, self.potential.Hel, self.mapR ) )
         engpe += 0.5 * np.sum( np.einsum( 'in,inm,im -> i', self.mapP, self.potential.Hel, self.mapP ) )
 
-        if (self.potype != 'harm_lin_cpl_symmetrized'):
+        if (self.potype != 'harm_lin_cpl_symmetrized' or self.potype != 'harm_lin_cpl_sym_2'):
             engpe += -0.5 * np.sum( np.einsum( 'inn -> i', self.potential.Hel ) )
 
         return engpe
@@ -169,10 +169,10 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
     
         #Theta term
         self.get_theta()
-        eng = -np.log( np.abs( self.theta ) ) / self.beta_p
+        eng = -np.log( np.abs( self.theta ) )
 
         #Gaussian mapping terms
-        eng += np.sum( self.mapR**2 + self.mapP**2 ) / self.beta_p
+        eng += np.sum( self.mapR**2 + self.mapP**2 )
 
         return eng
 
@@ -276,14 +276,13 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
 
     #####################################################################
 
-    def run_Gamma_only_MC( self, Nsteps=1000, Nprint=100,  disp_map=0.1, nm_bool=False, resamp=None, freeze_nuc=False ): 
+    def run_Gamma_only_MC( self, Nsteps, Nprint, disp_map=0.1, resamp = None, nm_bool=False ): 
         #Routine to run Monte-Carlo for mapping variables only
         #The sampling funciton is pure Gamma
         #Random displacements done in real-space for mapping variables
        
         #Nsteps   - number of Monte Carlo steps
         #disp_map - max size of random displacement for mapping variables
-        #freeze_nuc - freeze nuclear variables for entire mc run
 
         #Initialize mapping variables to be zero if None specified
         if (self.mapR is None or self.mapP is None):
@@ -295,10 +294,12 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         self.file_output = open( 'output.dat', 'w' )
         self.file_mapR   = open( 'mapR.dat','w' )
         self.file_mapP   = open( 'mapP.dat', 'w' )
+        self.file_Q      = open( 'Q.dat', 'w')
+        self.file_phi    = open( 'phi.dat', 'w')
 
         print()
         print( '#########################################################' )
-        print( 'Running', self.methodname, 'Gamma MC Routine for', Nsteps, 'Steps' )
+        print( 'Running Gamma MC Routine for', Nsteps, 'Steps' )
         print( '#########################################################' )
         print()
 
@@ -312,14 +313,15 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         for step in range( Nsteps ):
             #Print data starting with initial step
             if( np.mod( step, Nprint ) == 0 ):
-                print('Writing data at MC step', step, 'for', self.methodname, 'MC routine')
-                self.print_MC_data( step, numacc )
+                print('Writing data at MC step', step )
+                self.print_GMC_data( step, numacc )
                 sys.stdout.flush()
 
             #check if resampling step
-            if( np.mod(step + 1, resamp) == 0 ):
-                self.mapR = self.rng.normal(scale=1 / np.sqrt(2), size=self.mapR.shape)
-                self.mapP = self.rng.normal(scale=1 / np.sqrt(2), size=self.mapP.shape)
+            if( resamp!= None ):
+                if( np.mod(step + 1, resamp) == 0 ):
+                    self.mapR = self.rng.normal(scale=1 / np.sqrt(2), size=self.mapR.shape)
+                    self.mapP = self.rng.normal(scale=1 / np.sqrt(2), size=self.mapP.shape)
             
             self.mapR += self.rng.uniform(-1.0, 1.0, (self.nbds, self.nstates) ) * disp_map
             self.mapP += self.rng.uniform(-1.0, 1.0, (self.nbds, self.nstates) ) * disp_map
@@ -336,7 +338,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
                 orig_mapP = np.copy(self.mapP)
                 engold    = engnew
             else:
-                acc_cond = np.exp( -self.beta_p * ( d_eng ) )
+                acc_cond = np.exp( - d_eng )
                 if( self.rng.random() < acc_cond ):
                     #accept new configuration
                     numacc += 1
@@ -349,18 +351,20 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
                     self.mapP  = np.copy( orig_mapP )
 
         #Print data at final step regardless of Nprint
-        print('Writing data at MC step', step+1, 'for', self.methodname, 'MC routine')
-        self.print_MC_data( step+1, numacc )
+        print('Writing data at MC step', step+1 )
+        self.print_GMC_data( step+1, numacc )
         sys.stdout.flush()
 
         #Close output files
         self.file_output.close()
         self.file_mapR.close()
         self.file_mapP.close()
+        self.file_Q.close()
+        self.file_phi.close()
 
         print()
         print( '#########################################################' )
-        print( 'End',self.methodname, 'MC Routine' )
+        print( 'End Gamma-only MC Routine' )
         print( '#########################################################' )
         print()
 
@@ -409,5 +413,58 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
 
         self.file_mapR.flush()
         self.file_mapP.flush()
+
+
+    def print_GMC_data( self, step, numacc ):
+        #Subroutine to calculate and print-out observables of interest
+
+        fmt_str = '%20.8e'
+
+        ###### CALCULATE OBSERVABLES OF INTEREST #######
+
+        #Calculate sampling gamma terms
+        sample_theta = self.get_sampling_theta()
+
+        #Calculate electronic-state population using wigner estimator
+        wig_pop = self.calc_wigner_estimator()
+
+        #Calculate electronic-state population using semi-classical estimator
+        semi_pop = self.calc_semiclass_estimator()
+
+        #Calculate Q_i array (sized [nbds, nstates])
+        Q = self.calc_Q_array()
+
+        #Calculate phi array (sized nbds)
+        phi = self.calc_phi_fcn()
+
+        #Updates the value of the Theta function
+        self.get_theta()
+
+        ######## PRINT OUT EVERYTHING #######
+        output    = np.zeros(4+2*self.nstates)
+        output[0] = step
+        output[1] = sample_theta
+        output[2] = self.theta
+        if( step == 0 ):
+            output[3] = 1.0
+        else:
+            output[3] = numacc/step
+        output[4:4+self.nstates] = wig_pop
+        output[4+self.nstates:4+2*self.nstates] = semi_pop
+        np.savetxt( self.file_output, output.reshape(1, output.shape[0]), fmt_str )
+        self.file_output.flush()
+
+        #columns go as bead_1_state_1 bead_1_state_2 ... bead_1_state_K bead_2_state_1 bead_2_state_2 ...
+        np.savetxt( self.file_mapR, np.insert( self.mapR.flatten(), 0, step ).reshape(1, self.mapR.size+1), fmt_str )
+        np.savetxt( self.file_mapP, np.insert( self.mapP.flatten(), 0, step ).reshape(1, self.mapP.size+1), fmt_str )
+
+        #save Q and phi terms
+        np.savetxt( self.file_Q, np.insert( Q.flatten(), 0, step).reshape(1, -1),fmt_str )
+        np.savetxt( self.file_phi, np.insert( phi.flatten(), 0, step).reshape(1, -1),fmt_str )
+
+        self.file_mapR.flush()
+        self.file_mapP.flush()
+        self.file_Q.flush()
+        self.file_phi.flush()
 
     #####################################################################
