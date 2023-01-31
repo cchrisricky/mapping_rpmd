@@ -93,6 +93,7 @@ class map_rpmd(ABC):
         self.file_mapP   = open( 'mapP.dat', 'w' )
         self.file_Q      = open( 'Q.dat', 'w')
         self.file_phi    = open( 'phi.dat', 'w')
+        self.file_semi   = open( 'mvsq.dat', 'w')
 
         current_time = init_time
         step = 0
@@ -123,6 +124,7 @@ class map_rpmd(ABC):
         self.file_mapP.close()
         self.file_Q.close()
         self.file_phi.close()
+        self.file_semi.close()
 
         print()
         print( '#########################################################' )
@@ -131,6 +133,12 @@ class map_rpmd(ABC):
         print()
 
     #####################################################################
+
+    def run_dynamics_massN( self, Nsteps=None, Nprint=100, delt=None, intype=None, init_time=0.0, small_dt_ratio=1 ):
+        
+        #Routine to run the dynamics with the partition funciton e^(\beta H) instead of e^(\beta_N H_N)
+
+        tDigits = len( str( math.modf(Nprint * delt)[0] ) ) - 2
 
     def run_MC( self, Nsteps=1000, Nprint=100, disp_nuc=0.1, disp_map=0.1, nmove=1, nm_bool=False, resamp=None, freeze_nuc=False ):
 
@@ -518,18 +526,17 @@ class map_rpmd(ABC):
                 sigma = np.sqrt( mass / self.beta_p )
 
                 self.nucP[:,i] = self.rng.normal( 0.0, sigma, self.nbds )
+            
         
         else:
             beta_p = beta / self.nbds
-
             for i in range( self.nnuc ):
 
                 mass = self.mass[i]
                 sigma = np.sqrt( mass / beta_p )
 
                 self.nucP[:,i] = self.rng.normal( 0.0, sigma, self.nbds )
-
-
+                
     #####################################################################
 
     def calc_nucR_com( self ):
@@ -582,6 +589,13 @@ class map_rpmd(ABC):
             Q[:,i] = 0.5 * ( self.nstates * ( self.mapR[:, i]**2 + self.mapP[:, i]**2 ) - np.sum( self.mapR**2 + self.mapP**2, axis = 1 ) )
 
         return Q #output an array sized [nbds, nstates]
+    
+    def calc_semi_array( self ):
+        
+        #Calculate the sum of the squares for each electronic states
+        #directly related to the calculation of semi-classical population estimators
+        
+        return self.mapR**2 + self.mapP**2 #output an array sized [nbds, nstates]
 
     #####################################################################
 

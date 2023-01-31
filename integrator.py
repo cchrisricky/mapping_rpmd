@@ -135,7 +135,10 @@ class integrator():
         elif( self.intype == 'cayley' ):
             self.update_cayley_nucR( map_rpmd )
 
-        #Update electronic Hamiltonian given new positioninteg
+        #Update electronic Hamiltonian given new position
+        #NOTE: Moving forward this call may need to be generalized to allow for other types of methods
+        map_rpmd.potential.calc_Hel( map_rpmd.nucR )
+
         #Update mapping variables to full time-step
         self.update_vv_mapRP( map_rpmd )
 

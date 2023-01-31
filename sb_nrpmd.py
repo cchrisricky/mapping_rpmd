@@ -1,9 +1,10 @@
-#Define class for nrpmd
+#Define class for sb-nrpmd
 #It's a child-class of the map_rpmd parent class
 #The class of single bead nrpmd dynamics
 #Here the nuclear DOFs are treated by path-integral, with nbds copies of RP.
 #The electronic mapping variables only has one bead
 #The vibronic coupling only happens for the last nuclear bead
+#Switched to the beta (instead of beta_p) framework on 12/20/2022
 
 import numpy as np
 import utils
@@ -16,7 +17,6 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
 
     def __init__( self, nstates=1, nnuc=1, nbds=1, beta=1.0, mass=1.0, potype=None, potparams=None, mapR=None, mapP=None, nucR=None, nucP=None, Heltype=None ):
         
-        self.beta_p = beta / nbds
         self.Heltype = Heltype
         super().__init__( 'sb-NRPMD', nstates, nnuc, nbds, beta, mass, potype, potparams, mapR, mapP, nucR, nucP )
 
@@ -47,6 +47,8 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
             exit()
 
         if( self.Heltype not in ['ave', 'last'] ):
+            #special variable for the single-mapping-bead test
+            #'ave' means taking the averaged electronic hamiltonian over beads as the 
             print('ERROR: invalid Hel type')
             exit()
 
@@ -54,17 +56,16 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
 
     def get_nucP_MB( self, beta=None ):
 
-        #Obtain nuclear momentum from Maxwell-Boltzmann distribution at beta
-        #distribution defined as e^(-1/2*x^2/sigma^2) so sigma=sqrt(mass/beta_p)
+        #Obtain nuclear momentum from Maxwell-Boltzmann distribution at beta (not beta_p)
+        #distribution defined as e^(-1/2*x^2/sigma^2) so sigma=sqrt(mass/beta)
 
         if (beta is None):
-            beta_p = self.beta_p
-        else:
-            beta_p = beta / self.nbds
+            beta = self.beta
+
         self.nucP = np.zeros([self.nbds,self.nnuc])
 
         for i in range( self.nnuc ):
-            sigma = np.sqrt( self.mass[i] / beta_p )
+            sigma = np.sqrt( self.mass[i] / beta )
             self.nucP[:,i] = self.rng.normal( 0.0, sigma, self.nbds )
 
     #####################################################################
@@ -140,7 +141,7 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         #Calculate poulation of each electronic state using the semi-classical Estimator
         #See Chowdhury and Huo JCP 2019
 
-        pop = np.sum( 0.5*( self.mapR**2 + self.mapP**2 - 1.0 ), 0 )
+        pop = 0.5 * ( self.mapR**2 + self.mapP**2 - 1.0 )
 
         return pop
 
@@ -180,7 +181,10 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         #Force associated with harmonic springs between beads and the state-independent portion of the potential
         #This is dealt with in the parent class
         #If intRP_bool is False does not calculate the contribution from the harmonic ring polymer springs
-        d_nucP = super().get_timederiv_nucP( intRP_bool)
+        if (self.nbds > 1):
+            d_nucP = super().get_timederiv_nucP( intRP_bool )
+        else:
+            d_nucP = super().get_timederiv_nucP( intRP_bool = False )
 
         #Calculate nuclear derivative of electronic Hamiltonian matrix
         self.potential.calc_Hel_deriv( self.nucR )
@@ -189,9 +193,9 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         #XXX could maybe make this faster getting rid of double index in einsum
         #only the last bead is influenced by state dependent Hamiltonian
         if self.Heltype == 'last':
-            d_nucP[-1] += -0.5 * np.einsum( 'n,inm,m -> i', self.mapR, self.potential.d_Hel[-1], self.mapR )
-            d_nucP[-1] += -0.5 * np.einsum( 'n,inm,m -> i', self.mapP, self.potential.d_Hel[-1], self.mapP )
-            d_nucP[-1] +=  0.5 * np.einsum( 'inn -> i', self.potential.d_Hel[-1] )
+            d_nucP[0] += -0.5 * self.nbds * np.einsum( 'n,inm,m -> i', self.mapR, self.potential.d_Hel[0], self.mapR )
+            d_nucP[0] += -0.5 * self.nbds * np.einsum( 'n,inm,m -> i', self.mapP, self.potential.d_Hel[0], self.mapP )
+            d_nucP[0] +=  0.5 * self.nbds * np.einsum( 'inn -> i', self.potential.d_Hel[0] )
         if self.Heltype == 'ave':
             d_nucP += -0.5 * np.einsum( 'n,ijnm,m -> ij', self.mapR, self.potential.d_Hel, self.mapR ) / self.nbds
             d_nucP += -0.5 * np.einsum( 'n,ijnm,m -> ij', self.mapP, self.potential.d_Hel, self.mapP ) / self.nbds
@@ -204,7 +208,7 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         #Subroutine to calculate the time-derivative of just the mapping position for each bead
 
         if self.Heltype == 'last':
-            d_mapR =  np.einsum( 'nm,m->n', self.potential.Hel[-1], self.mapP )
+            d_mapR =  np.einsum( 'nm,m->n', self.potential.Hel[0], self.mapP ) * self.nbds
         if self.Heltype == 'ave':
             d_mapR =  np.einsum( 'nm,m->n', np.mean(self.potential.Hel, axis = 0), self.mapP )
         return d_mapR
@@ -215,7 +219,7 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         #Subroutine to calculate the time-derivative of just the mapping momentum for each bead
 
         if self.Heltype == 'last':
-            d_mapP = -np.einsum( 'nm,m->n', self.potential.Hel[-1], self.mapR )
+            d_mapP = -np.einsum( 'nm,m->n', self.potential.Hel[0], self.mapR ) * self.nbds
 
         if self.Heltype == 'ave':
             d_mapP = -np.einsum( 'nm,m->n', np.mean(self.potential.Hel, axis = 0), self.mapR )
@@ -228,7 +232,7 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         #Subroutine to calculate the second time-derivative of just the mapping positions for each bead
         #This assumes that the nuclei are fixed - used in vv style integrators
         if self.Heltype == 'last':
-            d2_mapR =  np.einsum( 'nm,m->n', self.potential.Hel[-1], d_mapP )
+            d2_mapR =  np.einsum( 'nm,m->n', self.potential.Hel[0], d_mapP ) * self.nbds
         if self.Heltype == 'ave':
             d2_mapR =  np.einsum( 'nm,m->n', np.mean(self.potential.Hel, axis = 0), d_mapP )
         return d2_mapR
@@ -243,9 +247,12 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
     def get_PE( self ):
         #Subroutine to calculate potential energy associated with mapping variables and nuclear position
 
-        #Internal ring-polymer modes
-        engpe = self.potential.calc_rp_harm_eng( self.nucR, self.beta_p, self.mass )
-
+        ##Internal ring-polymer modes, 0 if there is only one bead (i.e., LSC-IVR)
+        if self.nbds > 1:
+            engpe = self.potential.calc_rp_harm_eng( self.nucR, self.beta_p, self.mass )
+        else:
+            engpe = 0
+            
         #State independent term
         engpe += self.potential.calc_state_indep_eng( self.nucR )
 
@@ -254,9 +261,9 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
 
         #MMST Term
         if self.Heltype == 'last':
-            engpe += 0.5 * np.einsum( 'n,nm,m', self.mapR, self.potential.Hel[-1], self.mapR ) 
-            engpe += 0.5 * np.einsum( 'n,nm,m', self.mapP, self.potential.Hel[-1], self.mapP )
-            engpe += -0.5 * np.einsum( 'nn', self.potential.Hel[-1] ) 
+            engpe += 0.5 * np.einsum( 'n,nm,m', self.mapR, self.potential.Hel[0], self.mapR ) * self.nbds 
+            engpe += 0.5 * np.einsum( 'n,nm,m', self.mapP, self.potential.Hel[0], self.mapP ) * self.nbds 
+            engpe += -0.5 * np.einsum( 'nn', self.potential.Hel[0] ) * self.nbds
         if self.Heltype == 'ave':
             engpe += 0.5 * np.einsum( 'n,nm,m', self.mapR, np.mean(self.potential.Hel, axis=0), self.mapR ) 
             engpe += 0.5 * np.einsum( 'n,nm,m', self.mapP, np.mean(self.potential.Hel, axis=0), self.mapP )
@@ -269,13 +276,12 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         #Subroutine to calculate Theta (minus the Gaussian term and prefactor) following Huo's 2019 paper https://dx.doi.org/10.1063/1.5096276
 
         #Electronic trace over the product of C matrices
-        halfeye = 0.5 * np.eye(self.nstates)
-        prod = np.outer(( self.mapR + 1j*self.mapP ), ( self.mapR - 1j*self.mapP )) - halfeye
+        prod = np.zeros([ self.nstates, self.nstates ], dtype = complex)
+        prod = np.outer(( self.mapR + 1j*self.mapP ), ( self.mapR - 1j*self.mapP )) - 0.5 * np.eye(self.nstates)
 
         self.theta = np.real( np.trace( prod ) )
 
     #####################################################################
-
 
     def print_data( self, current_time ):
         #Subroutine to calculate and print-out observables of interest
@@ -295,7 +301,7 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         etot = engpe + engke
 
         #calculate the theta term
-        theta = self.get_theta()
+        self.get_theta()
 
         #Calculate electronic-state population using wigner estimator
         wig_pop = self.calc_wigner_estimator()
@@ -318,7 +324,7 @@ class sb_nrpmd( map_rpmd.map_rpmd ):
         output[1] = etot
         output[2] = engke
         output[3] = engpe
-        output[4] = theta
+        output[4] = self.theta
         output[5:5+self.nstates] = wig_pop
         output[5+self.nstates:5+2*self.nstates] = semi_pop
         output[5+2*self.nstates:] = nucR_com

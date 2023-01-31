@@ -222,6 +222,10 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
 
         Q = self.calc_Q_array()
 
+        #Calculate the sum of squared mapping variables
+
+        semi = self.calc_semi_array()
+
         #Calculate phi array (sized nbds)
 
         phi = self.calc_phi_fcn()
@@ -266,6 +270,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         #save Q and phi terms
         np.savetxt( self.file_Q, np.insert( Q.flatten(), 0, current_time).reshape(1, -1),fmt_str )
         np.savetxt( self.file_phi, np.insert( phi.flatten(), 0, current_time).reshape(1, -1),fmt_str )
+        np.savetxt( self.file_semi, np.insert( semi.flatten(), 0, current_time).reshape(1, -1),fmt_str )
 
         self.file_nucR.flush()
         self.file_nucP.flush()
@@ -273,6 +278,7 @@ class noneq_nrpmd( map_rpmd.map_rpmd ):
         self.file_mapP.flush()
         self.file_Q.flush()
         self.file_phi.flush()
+        self.file_semi.flush()
 
     #####################################################################
 
